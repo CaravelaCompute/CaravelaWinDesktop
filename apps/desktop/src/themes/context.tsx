@@ -353,6 +353,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => applyTheme(activeTheme, resolvedMode), [activeTheme, resolvedMode])
 
+  // Sync the window title with the theme's branded productName. Themes without
+  // `branding.productName` fall back to the default "Hermes" baseline so the
+  // window title is always in a known state.
+  useEffect(() => {
+    document.title = activeTheme.branding?.productName ?? 'Hermes'
+  }, [activeTheme])
+
   // Keep the native window appearance pinned to the app theme (vibrancy
   // material, titlebar, new-window pre-paint background).
   useEffect(() => syncNativeTheme(mode, renderedMode), [mode, renderedMode])

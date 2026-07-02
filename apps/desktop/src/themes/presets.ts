@@ -277,16 +277,101 @@ export const slateTheme: DesktopTheme = {
   }
 }
 
+/**
+ * Caravela — brand identity for Caravela (Mont-Saint-Guibert, Belgium · Origin: Lisbon).
+ *
+ * Maps the Caravela Brand Kit v2.0 (April 2026) tokens onto the desktop theme
+ * model. Honors the brand's 70/20/10 ratio — Navy dominates, Parchment warms,
+ * Signal (orange) punctuates — so dark mode leads with Ink/Navy surfaces and
+ * parchment text, and light mode leads with Paper/Parchment surfaces and Ink
+ * text, with Signal reserved for the accent / focus / streaming-cursor slot in
+ * both. Typography is the brand pairing: Inter Tight (UI/body) + JetBrains Mono
+ * (metadata).
+ */
+export const caravelaTheme: DesktopTheme = {
+  name: 'caravela',
+  label: 'Caravela',
+  description: 'Navy, parchment, and signal orange — chart the course',
+  colors: {
+    background: '#FBF8F2',
+    foreground: '#0A2540',
+    card: '#FFFFFF',
+    cardForeground: '#0A2540',
+    muted: '#F4EEE3',
+    mutedForeground: '#3D4A5C',
+    popover: '#FFFFFF',
+    popoverForeground: '#0A2540',
+    primary: '#123A6E',
+    primaryForeground: '#FBF8F2',
+    secondary: '#F4EEE3',
+    secondaryForeground: '#123A6E',
+    accent: '#E86A1C',
+    accentForeground: '#FBF8F2',
+    border: '#D9CFBC',
+    input: '#D9CFBC',
+    ring: '#E86A1C',
+    midground: '#123A6E',
+    composerRing: '#123A6E',
+    destructive: '#B42318',
+    destructiveForeground: '#FBF8F2',
+    sidebarBackground: '#F4EEE3',
+    sidebarBorder: '#D9CFBC',
+    userBubble: '#F4EEE3',
+    userBubbleBorder: '#D9CFBC'
+  },
+  darkColors: {
+    background: '#0A2540',
+    foreground: '#F4EEE3',
+    card: '#123A6E',
+    cardForeground: '#F4EEE3',
+    muted: '#173E78',
+    mutedForeground: '#A8B4C8',
+    popover: '#123A6E',
+    popoverForeground: '#F4EEE3',
+    primary: '#F4EEE3',
+    primaryForeground: '#0A2540',
+    secondary: '#173E78',
+    secondaryForeground: '#F4EEE3',
+    accent: '#E86A1C',
+    accentForeground: '#0A2540',
+    border: '#1F4A8A',
+    input: '#1F4A8A',
+    ring: '#E86A1C',
+    midground: '#E86A1C',
+    composerRing: '#E86A1C',
+    destructive: '#C0473A',
+    destructiveForeground: '#F4EEE3',
+    sidebarBackground: '#08203A',
+    sidebarBorder: '#1F4A8A',
+    userBubble: '#173E78',
+    userBubbleBorder: '#2E6FBF'
+  },
+  typography: {
+    fontSans: `"Inter Tight", "Work Sans", ${SYSTEM_SANS}`,
+    fontMono: `"JetBrains Mono", ${SYSTEM_MONO}`,
+    fontUrl:
+      'https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap'
+  },
+  branding: {
+    productName: 'Caravela',
+    brandMarkUrl: 'brand/caravela/glyph.png',
+    backdropUrl: 'brand/caravela/backdrop.svg',
+    wordmarkUrl: 'brand/caravela/wordmark.png',
+    backdropMode: 'motif'
+  }
+}
+
 export const BUILTIN_THEMES: Record<string, DesktopTheme> = {
   nous: nousTheme,
   midnight: midnightTheme,
   ember: emberTheme,
   mono: monoTheme,
   cyberpunk: cyberpunkTheme,
-  slate: slateTheme
+  slate: slateTheme,
+  caravela: caravelaTheme
 }
 
 export const BUILTIN_THEME_LIST = Object.values(BUILTIN_THEMES)
 
 /** Skin used when nothing is persisted or the persisted name is retired. */
-export const DEFAULT_SKIN_NAME = 'nous'
+export const DEFAULT_SKIN_NAME = 'caravela'
