@@ -98,4 +98,28 @@ export interface DesktopTheme {
   terminal?: DesktopTerminalPalette
   /** Dark-variant terminal ANSI palette. Falls back to `terminal`. */
   darkTerminal?: DesktopTerminalPalette
+  /** Optional brand overrides — window title, sidebar mark, backdrop motif. */
+  branding?: DesktopBranding
+}
+
+/**
+ * Brand override slot — lets a theme replace the in-app identity assets
+ * (window title, sidebar mark, atmospheric backdrop, wordmark) without
+ * forking the chrome components. All fields are optional; renderer
+ * components fall back to the default Hermes assets when omitted.
+ *
+ *   productName  — window title and any productName surface
+ *   brandMarkUrl — sidebar/badge mark (square, fills its tile)
+ *   backdropUrl  — atmospheric background image
+ *   wordmarkUrl  — full wordmark (used in onboarding / about)
+ *   backdropMode — 'photo' (default) applies invert/saturate filter math
+ *                  tuned for the Nous statue photo; 'motif' renders the
+ *                  asset as-is (right for SVG illustrations / brand motifs)
+ */
+export interface DesktopBranding {
+  productName?: string
+  brandMarkUrl?: string
+  backdropUrl?: string
+  wordmarkUrl?: string
+  backdropMode?: 'photo' | 'motif'
 }

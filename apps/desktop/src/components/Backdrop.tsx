@@ -1,6 +1,8 @@
 import { Leva, useControls } from 'leva'
 import { type CSSProperties, useEffect, useState } from 'react'
 
+import { useTheme } from '@/themes/context'
+
 const BLEND_MODES = [
   'normal',
   'multiply',
@@ -25,6 +27,14 @@ const assetPath = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/
 
 export function Backdrop() {
   const [controlsOpen, setControlsOpen] = useState(false)
+  const { theme } = useTheme()
+  const branding = theme.branding
+  const backdropUrl = branding?.backdropUrl
+  // 'motif' = brand illustration (SVG/PNG) rendered as-is, centered, low-opacity.
+  // 'photo' (default) = photo treatment with the invert/saturate/blend filter
+  // tuned for the Nous statue. Branded themes that ship a motif opt into the
+  // clean path so their identity asset isn't put through the photo filter.
+  const motifMode = branding?.backdropMode === 'motif'
 
   useEffect(() => {
     if (!import.meta.env.DEV) {
@@ -87,7 +97,18 @@ export function Backdrop() {
     <>
       <Leva collapsed hidden={!import.meta.env.DEV || !controlsOpen} titleBar={{ title: 'backdrop', drag: true }} />
 
-      {statue.enabled && (
+      {statue.enabled && motifMode && backdropUrl && (
+        <div aria-hidden className="pointer-events-none absolute inset-0 z-2 overflow-hidden">
+          <img
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+            fetchPriority="low"
+            src={assetPath(backdropUrl)}
+          />
+        </div>
+      )}
+
+      {statue.enabled && !motifMode && (
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 z-2"
@@ -100,7 +121,7 @@ export function Backdrop() {
             alt=""
             className="w-auto min-w-dvw object-cover"
             fetchPriority="low"
-            src={assetPath('ds-assets/filler-bg0.jpg')}
+            src={assetPath(backdropUrl ?? 'ds-assets/filler-bg0.jpg')}
             style={{
               height: `${statue.scale}dvh`,
               objectPosition: statue.objectPosition,
