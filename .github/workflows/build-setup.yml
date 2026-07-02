@@ -1,0 +1,66 @@
+# Builds the Caravela Setup updater (apps/bootstrap-installer, Tauri/Rust)
+# on a Windows runner — we can't cross-compile Tauri from the Linux box.
+# The exe is attached to the newest caravela-* release as caravela-setup.exe.
+#
+# Canonical copy lives in the private build machine's
+# caravela-installer/assets/github-workflows/; the sync pipeline copies it
+# into .github/workflows/ on every publish, then triggers it when the
+# bootstrap-installer sources changed.
+name: build-setup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/bootstrap-installer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/bootstrap-installer/src-tauri
+
+      - name: Install npm deps
+        run: npm install --no-audit --no-fund
+
+      - name: Build setup exe (no bundle — we only need the raw binary)
+        run: npm run tauri:build -- --no-bundle
+
+      - name: Collect exe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release/*.exe | Select-Object -First 1
+          if (-not $exe) { throw "no exe produced" }
+          Copy-Item $exe.FullName "$env:GITHUB_WORKSPACE/caravela-setup.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caravela-setup
+          path: caravela-setup.exe
+
+      - name: Attach to newest release
+        working-directory: .
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = gh release list --limit 1 --json tagName -q '.[0].tagName'
+          if ($tag) {
+            gh release upload $tag caravela-setup.exe --clobber
+            Write-Host "uploaded caravela-setup.exe to $tag"
+          } else {
+            Write-Host "no release yet — artifact only"
+          }
