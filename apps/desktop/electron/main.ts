@@ -424,7 +424,7 @@ const BOOT_FAKE_STEP_MS = (() => {
   return Math.max(120, raw)
 })()
 
-const APP_NAME = 'Caravela'
+const APP_NAME = process.env.HERMES_DESKTOP_APP_NAME || 'Caravela'
 const TITLEBAR_HEIGHT = 34
 const MACOS_TRAFFIC_LIGHTS_HEIGHT = 14
 
