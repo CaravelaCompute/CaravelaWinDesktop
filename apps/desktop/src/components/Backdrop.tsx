@@ -1,6 +1,8 @@
+import { useStore } from '@nanostores/react'
 import { Leva, useControls } from 'leva'
 import { type CSSProperties, useEffect, useState } from 'react'
 
+import { $backdrop } from '@/store/backdrop'
 import { useTheme } from '@/themes/context'
 
 const BLEND_MODES = [
@@ -27,6 +29,7 @@ const assetPath = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/
 
 export function Backdrop() {
   const [controlsOpen, setControlsOpen] = useState(false)
+  const on = useStore($backdrop)
   const { theme } = useTheme()
   const branding = theme.branding
   const backdropUrl = branding?.backdropUrl
@@ -97,7 +100,7 @@ export function Backdrop() {
     <>
       <Leva collapsed hidden={!import.meta.env.DEV || !controlsOpen} titleBar={{ title: 'backdrop', drag: true }} />
 
-      {statue.enabled && motifMode && backdropUrl && (
+      {on && statue.enabled && motifMode && backdropUrl && (
         <div aria-hidden className="pointer-events-none absolute inset-0 z-2 overflow-hidden">
           <img
             alt=""
@@ -108,7 +111,7 @@ export function Backdrop() {
         </div>
       )}
 
-      {statue.enabled && !motifMode && (
+      {on && statue.enabled && !motifMode && (
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 z-2"
