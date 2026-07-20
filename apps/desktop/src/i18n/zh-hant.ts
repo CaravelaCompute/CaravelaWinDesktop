@@ -322,7 +322,8 @@ export const zhHant = defineLocale({
         title: '寵物',
         intro:
           '領養一隻懸浮在應用上的 petdex 動畫寵物，它會根據 Caravela 的狀態做出反應——工具執行時奔跑、成功時歡呼、出錯時沮喪。',
-        restartHint: '寵物功能需要重新啟動——目前執行的應用在此功能加入前啟動。請結束並重新開啟 Caravela，然後回到此處。',
+        restartHint:
+          '寵物功能需要重新啟動——目前執行的應用在此功能加入前啟動。請結束並重新開啟 Caravela，然後回到此處。',
         scaleTitle: '大小',
         scaleDesc: '調整懸浮寵物的大小，所有介面即時生效。',
         roamTitle: '漫遊',

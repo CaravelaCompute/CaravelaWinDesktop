@@ -178,11 +178,11 @@ export function Intro({ personality, seed }: IntroProps) {
           // when the active theme ships its own typographic identity (e.g. the
           // Caravela ship-and-waves wordmark). Sized to roughly match the fit-
           // text wordmark's visual weight on a default chat empty-state.
-          <div className="mx-auto mb-1 flex w-[calc(100%-1rem)] items-center justify-center" aria-label={wordmark}>
+          <div aria-label={wordmark} className="mx-auto mb-1 flex w-[calc(100%-1rem)] items-center justify-center">
             <img
               alt={wordmark}
-              src={wordmarkSrc}
               className="h-auto max-h-[40vh] w-auto max-w-[min(360px,55%)] object-contain"
+              src={wordmarkSrc}
             />
           </div>
         ) : (
