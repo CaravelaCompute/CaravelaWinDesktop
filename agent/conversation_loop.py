@@ -33,6 +33,7 @@ from agent.display import KawaiiSpinner
 from agent.error_classifier import FailoverReason, classify_api_error
 from agent.iteration_budget import IterationBudget
 from agent.turn_context import (
+    _compression_warrants_another_preflight_pass,
     build_turn_context,
     compose_user_api_content,
     reanchor_current_turn_user_idx,
@@ -91,11 +92,6 @@ INTERRUPT_WAITING_FOR_MODEL_PREFIX = "Operation interrupted: waiting for model r
 # itself, so every exception passes through them, which would make
 # _hit_local always True and misclassify transient API/network errors as
 # non-retryable local bugs. (#66267)
-#
-# AttributeError is handled separately in the outer except block — it is
-# ALWAYS a local programming bug when it targets agent attributes (especially
-# missing methods introduced by a commit splice after an auto-update rewrites
-# source underneath a live process). See the dedicated guard below. (#68178)
 _LOCAL_PROCESSING_MODULES = frozenset({
     "agent_runtime_helpers",
     "message_content",
@@ -689,6 +685,15 @@ def run_conversation(
     truncated_tool_call_retries = 0
     truncated_response_parts: List[str] = []
     compression_attempts = 0
+    # One resolved per-turn compression attempt cap, shared by every site that
+    # consumes ``compression_attempts``: the pre-API pressure gate, the
+    # overflow/413 retry handlers, and the post-tool compaction gate.
+    # Config-driven via compression.max_attempts (parsed + validated in
+    # agent_init); default 3 preserves the prior hardcoded behavior for
+    # objects without the attribute (older pickles / minimal stubs).
+    max_compression_attempts = getattr(agent, "max_compression_attempts", 3)
+    _last_preflight_pressure: Optional[int] = None
+    _preflight_compression_blocked = _ctx.preflight_compression_blocked
     _turn_exit_reason = "unknown"  # Diagnostic: why the loop ended
     # Last composed answer intentionally held back by a verification gate. If
     # that continuation consumes the remaining budget, this is the best
@@ -701,6 +706,10 @@ def run_conversation(
     # reused as the final response — not merely because any interim was
     # streamed. (#65919 review: response-loss blocker)
     _pending_verification_response_previewed = False
+    # If pre-API compression fires after MoA advisors have produced guidance,
+    # retain that ephemeral output and rebase it onto the compacted transcript
+    # on the next loop iteration. This prevents a second advisor fan-out.
+    pending_moa_prepared_request = None
 
     # Per-turn tally of consecutive successful credential-pool token refreshes,
     # keyed by (provider, pool-entry-id). A persistent upstream 401 lets
@@ -724,39 +733,6 @@ def run_conversation(
         )
 
     while (api_call_count < agent.max_iterations and agent.iteration_budget.remaining > 0) or agent._budget_grace_call:
-        # ── Code skew guard (#68178) ───────────────────────────────
-        # Check whether the source tree has been updated underneath this
-        # long-lived process.  If so, a lazy import can resolve newly-added
-        # symbols against the stale in-memory AIAgent class, producing an
-        # AttributeError that would otherwise retry indefinitely.
-        # Perform the check on every iteration (it is cheap once confirmed).
-        _skew_warning = getattr(agent, "_check_code_skew_before_turn", lambda: None)()
-        if _skew_warning:
-            logger.warning("Code skew detected at API call #%d: %s", api_call_count + 1, _skew_warning)
-            _turn_exit_reason = "code_skew_detected"
-            final_response = (
-                f"I apologize, but the agent has detected that its source code "
-                f"has been updated while running. To avoid compatibility issues, "
-                f"please restart the application. ({_skew_warning})"
-            )
-            messages.append({"role": "assistant", "content": final_response})
-            return finalize_turn(
-                agent,
-                final_response=final_response,
-                api_call_count=api_call_count,
-                interrupted=False,
-                failed=True,
-                messages=messages,
-                conversation_history=conversation_history,
-                effective_task_id=effective_task_id,
-                turn_id=turn_id,
-                user_message=user_message,
-                original_user_message=original_user_message,
-                _should_review_memory=_should_review_memory,
-                _turn_exit_reason=_turn_exit_reason,
-                _pending_verification_response=_pending_verification_response,
-                _pending_verification_response_previewed=_pending_verification_response_previewed,
-            )
         # Reset per-turn checkpoint dedup so each iteration can take one snapshot
         agent._checkpoint_mgr.new_turn()
 
@@ -1117,6 +1093,29 @@ def run_conversation(
         # the OpenAI SDK. Sanitizing here prevents the 3-retry cycle.
         _sanitize_messages_surrogates(api_messages)
 
+        # Build a persistent-MoA request before measuring compression pressure.
+        # MoA reference output is injected into the aggregator prompt, but it
+        # is deliberately ephemeral and therefore absent from ``messages``.
+        # Preparing here makes the pre-API guard measure the exact prompt the
+        # aggregator will receive; ``create()`` consumes this private prepared
+        # request later without running the advisors a second time.
+        _moa_prepared_request = None
+        if agent.provider == "moa":
+            _moa_completions = getattr(getattr(agent.client, "chat", None), "completions", None)
+            if pending_moa_prepared_request is not None:
+                _rebase_moa_request = getattr(_moa_completions, "rebase_prepared_request", None)
+                if callable(_rebase_moa_request):
+                    _moa_prepared_request = _rebase_moa_request(
+                        pending_moa_prepared_request, api_messages
+                    )
+                pending_moa_prepared_request = None
+            if _moa_prepared_request is None:
+                _prepare_moa_request = getattr(_moa_completions, "prepare", None)
+                if callable(_prepare_moa_request):
+                    _moa_prepared_request = _prepare_moa_request(api_messages)
+            if _moa_prepared_request is not None:
+                api_messages = _moa_prepared_request["messages"]
+
         # One image-stripped message estimate feeds both figures. Was: a
         # str(msg) char walk (re-serialized base64 every call) + a second
         # messages walk inside estimate_request_tokens_rough. Tools added
@@ -1163,6 +1162,37 @@ def run_conversation(
         # LLM cooldown + anti-thrash guards (#11529). compression_attempts is a
         # hard per-turn backstop shared with the overflow error handlers.
         _compressor = agent.context_compressor
+        _preflight_threshold = int(
+            getattr(_compressor, "threshold_tokens", 0) or 0
+        )
+        # A previous mid-turn preflight pass deliberately continued the loop so
+        # API-only context and all sanitization could be rebuilt. Compare that
+        # fully assembled request with the fully assembled request that caused
+        # the pass. Raw ``messages`` are not equivalent here: they omit
+        # api_content/plugin injections, prefills, MoA context, and ephemeral
+        # system text.
+        _previous_preflight_pressure = _last_preflight_pressure
+        _last_preflight_pressure = None
+        if (
+            _previous_preflight_pressure is not None
+            and request_pressure_tokens >= _preflight_threshold
+            and not _compression_warrants_another_preflight_pass(
+                _previous_preflight_pressure,
+                request_pressure_tokens,
+                _preflight_threshold,
+            )
+        ):
+            # Stop proactive retries for this turn without consuming the
+            # shared overflow-recovery budget. If the provider proves the
+            # request truly does not fit, its error handler may still compact
+            # with that stronger signal.
+            _preflight_compression_blocked = True
+            logger.warning(
+                "Pre-API compression made insufficient progress: ~%s -> "
+                "~%s request tokens; skipping additional preflight passes",
+                f"{_previous_preflight_pressure:,}",
+                f"{request_pressure_tokens:,}",
+            )
         _defer_preflight = getattr(
             _compressor, "should_defer_preflight_to_real_usage", lambda _t: False
         )
@@ -1172,25 +1202,30 @@ def run_conversation(
         if (
             agent.compression_enabled
             and len(messages) > 1
-            and compression_attempts < 3
+            and compression_attempts < max_compression_attempts
+            and not _preflight_compression_blocked
             and not _defer_preflight(request_pressure_tokens)
             and not _compression_cooldown
             and _compressor.should_compress(request_pressure_tokens)
         ):
+            if _moa_prepared_request is not None:
+                pending_moa_prepared_request = _moa_prepared_request
             compression_attempts += 1
             logger.info(
                 "Pre-API compression: ~%s request tokens >= %s threshold "
-                "(context=%s, attempt=%s/3)",
+                "(context=%s, attempt=%s/%s)",
                 f"{request_pressure_tokens:,}",
                 f"{int(getattr(_compressor, 'threshold_tokens', 0) or 0):,}",
                 f"{int(getattr(_compressor, 'context_length', 0) or 0):,}"
                 if getattr(_compressor, "context_length", 0) else "unknown",
                 compression_attempts,
+                max_compression_attempts,
             )
             agent._emit_status(
                 f"📦 Pre-API compression: ~{request_pressure_tokens:,} tokens "
                 f"near the context/output limit. Compacting before the next model call."
             )
+            _last_preflight_pressure = request_pressure_tokens
             messages, active_system_prompt = agent._compress_context(
                 messages,
                 system_message,
@@ -1254,7 +1289,6 @@ def run_conversation(
         retry_count = 0
         max_retries = agent._api_max_retries
         _retry = TurnRetryState()
-        max_compression_attempts = 3
 
         finish_reason = "stop"
         response = None  # Guard against UnboundLocalError if all retries fail
@@ -1422,6 +1456,12 @@ def run_conversation(
 
                 if env_var_enabled("HERMES_DUMP_REQUESTS"):
                     agent._dump_api_request_debug(api_kwargs, reason="preflight")
+
+                # This object is private to the in-process MoA facade.  Add it
+                # only after middleware, hooks, and debug dumps so none of them
+                # attempts to serialize it as part of the provider payload.
+                if _moa_prepared_request is not None and agent.provider == "moa":
+                    api_kwargs["_moa_prepared_request"] = _moa_prepared_request
 
                 # Always prefer the streaming path — even without stream
                 # consumers.  Streaming gives us fine-grained health
@@ -5177,7 +5217,12 @@ def run_conversation(
                         messages, tools=agent.tools or None
                     )
 
-                if agent.compression_enabled and _compressor.should_compress(_real_tokens):
+                if (
+                    agent.compression_enabled
+                    and compression_attempts < max_compression_attempts
+                    and _compressor.should_compress(_real_tokens)
+                ):
+                    compression_attempts += 1
                     agent._safe_print("  ⟳ compacting context…")
                     messages, active_system_prompt = agent._compress_context(
                         messages, system_message,
@@ -5744,21 +5789,7 @@ def run_conversation(
 
             _is_local_processing_error = _hit_local and not _hit_api
 
-            # AttributeError on the agent object is ALWAYS a local bug —
-            # it means the live process is running spliced commits (the
-            # method does not exist on the in-memory AIAgent class but
-            # conversation_loop.py references it).  Circuit-break
-            # immediately to avoid burning provider API calls. (#68178)
-            _is_agent_attribute_error = (
-                isinstance(e, AttributeError)
-                and ("run_agent" in tb_module_names or "agent" in tb_module_names)
-            )
-
-            if _is_agent_attribute_error:
-                error_msg = (
-                    f"Fatal local code error in API call #{api_call_count}: {str(e)}"
-                )
-            elif _is_local_processing_error:
+            if _is_local_processing_error:
                 error_msg = (
                     f"Error during local message processing after "
                     f"OpenAI-compatible API call #{api_call_count}: {str(e)}"
@@ -5812,22 +5843,13 @@ def run_conversation(
             # role-alternation invariants.
 
             # If we're near the limit, break to avoid infinite loops.
-            # Local processing errors and agent AttributeError (commit-splice
-            # symptom) are deterministic — stop immediately rather than
-            # retrying until the budget is exhausted. (#68178)
+            # Local processing errors are deterministic — stop immediately
+            # rather than retrying until the budget is exhausted.
             if (
-                _is_agent_attribute_error
-                or _is_local_processing_error
+                _is_local_processing_error
                 or api_call_count >= agent.max_iterations - 1
             ):
-                if _is_agent_attribute_error:
-                    _turn_exit_reason = f"code_skew_attribute_error({error_msg[:80]})"
-                    final_response = (
-                        f"I apologize, but the agent process has detected a code "
-                        f"mismatch (running stale code after an update). "
-                        f"Please restart the application. Error: {error_msg}"
-                    )
-                elif _is_local_processing_error:
+                if _is_local_processing_error:
                     _turn_exit_reason = f"local_processing_error({error_msg[:80]})"
                     final_response = f"I apologize, but I encountered an error while processing the model response: {error_msg}"
                 else:
